@@ -142,6 +142,3 @@ scripts/
 
 Each feature module under `src/app/` follows the same layered shape as `swiftbite-core`: `entity/` → `dto/` → `repository/` (Knex, takes a `conn: Knex` so callers choose hot vs. archive) → `service/` (business logic, `@injectable()`) → `controller/` (`@injectable()`) → `routes.ts` (resolves its controller via `container.resolve()`). Cross-module reads go through narrow accessor methods (e.g. `OrderService.getOrderEntityById`); cross-module **writes** that must land in the same transaction as another module's write import that module's repository function directly, always with a comment explaining why — see `CLAUDE.md` and `docs/folder-structure.md`.
 
-## Documentation
-
-Full architecture, schema, API contracts, and per-module business logic live in [`docs/`](./docs) — start at [`docs/README.md`](./docs/README.md).
