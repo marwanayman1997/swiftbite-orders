@@ -1,0 +1,7 @@
+import { AppError } from "../../lib/error/AppError.ts";
+
+export const AgentInActiveDeliveryError = new AppError(
+  "AgentInActiveDelivery",
+  409,
+);
+export const NotOnlineError = new AppError("NotOnline", 409);
