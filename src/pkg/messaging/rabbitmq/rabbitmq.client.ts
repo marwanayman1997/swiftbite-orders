@@ -36,8 +36,18 @@ export class RabbitMQClient implements IMessageBroker {
     await this.channel.waitForConnect();
   }
 
+  // Merges into the existing topology rather than replacing it — this client
+  // is a shared singleton (lib/messaging/init.ts) and independent callers
+  // (core-events consumer, outbox publisher) each declare their own slice.
+  // Replacing `this.topology` outright would make the last caller's slice
+  // silently win on every reconnect, since applyTopology always re-reads the
+  // single `this.topology` field for every previously registered setup.
   async declareTopology(topology: BrokerTopology): Promise<void> {
-    this.topology = topology;
+    this.topology = {
+      exchanges: [...(this.topology.exchanges ?? []), ...(topology.exchanges ?? [])],
+      queues: [...(this.topology.queues ?? []), ...(topology.queues ?? [])],
+      bindings: [...(this.topology.bindings ?? []), ...(topology.bindings ?? [])],
+    };
     await this.channel.addSetup((ch: ConfirmChannel) => this.applyTopology(ch));
   }
 

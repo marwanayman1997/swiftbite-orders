@@ -1,9 +1,11 @@
 import { Knex } from "knex";
 import { inject, injectable } from "tsyringe";
+import { v4 as uuidv4 } from "uuid";
 import { db } from "../../../lib/knex/knex.ts";
 import { env } from "../../../lib/config/env.ts";
 import { TOKENS } from "../../../lib/di/tokens.ts";
 import { UnAuthorizedError } from "../../../lib/auth/errors.ts";
+import { insertOutboxEvent } from "../../../lib/events/outbox.repo.ts";
 import { getBranch } from "../../../lib/core-client/branch.client.ts";
 import { getAgent } from "../../../lib/core-client/agent.client.ts";
 import { OrderService } from "../../order/service/order.service.ts";
@@ -336,6 +338,38 @@ export class DeliveryService {
         deliveryId: delivery.id,
         amount: agentEarning,
         currency: order.currency,
+      });
+
+      await insertOutboxEvent(trx, {
+        aggregateType: "order",
+        aggregateId: order.id,
+        eventType: "order.status_changed",
+        eventId: uuidv4(),
+        payload: {
+          orderPublicId: order.publicId,
+          region,
+          restaurantId: order.restaurantId,
+          branchId: order.branchId,
+          status: OrderStatus.DELIVERED,
+          updatedAt: new Date().toISOString(),
+          // Lets consumers (analytics-service) attribute this transition back
+          // to the day the order was placed, not the day it settled.
+          orderCreatedAt: order.createdAt.toISOString(),
+          currency: order.currency,
+        },
+      });
+      await insertOutboxEvent(trx, {
+        aggregateType: "delivery",
+        aggregateId: delivery.id,
+        eventType: "delivery.completed",
+        eventId: uuidv4(),
+        payload: {
+          orderPublicId: order.publicId,
+          deliveryId: delivery.id,
+          agentId: delivery.agentId,
+          region,
+          deliveredAt: new Date().toISOString(),
+        },
       });
 
       await trx.commit();

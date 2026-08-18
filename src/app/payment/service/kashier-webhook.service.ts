@@ -1,10 +1,13 @@
 import { Knex } from "knex";
 import { inject, injectable } from "tsyringe";
+import { v4 as uuidv4 } from "uuid";
 import { db } from "../../../lib/knex/knex.ts";
 import { paymentProvider } from "../../../lib/payments/init.ts";
 import { AppError } from "../../../lib/error/AppError.ts";
 import { TOKENS } from "../../../lib/di/tokens.ts";
+import { insertOutboxEvent } from "../../../lib/events/outbox.repo.ts";
 import { OrderService } from "../../order/service/order.service.ts";
+import { findItemsByOrderIds } from "../../order/repository/order-item.repo.ts";
 import { OrderStatus } from "../../order/enums.ts";
 import { InvalidSignatureError } from "../errors.ts";
 import {
@@ -214,11 +217,57 @@ export class KashierWebhookService {
         idempotencyKey: `charge:${providerTransactionId}`,
       });
 
+      await insertOutboxEvent(trx, {
+        aggregateType: "payment",
+        aggregateId: order.id,
+        eventType: "payment.captured",
+        eventId: uuidv4(),
+        payload: {
+          orderPublicId: order.publicId,
+          region,
+          amount: session.amount,
+          currency: session.currency,
+          method: "online",
+        },
+      });
+
       await this.orderService.applySystemStatusChange(
         order.id,
         region,
         OrderStatus.PLACED,
+        trx,
       );
+
+      // Online orders aren't "real" to analytics until the charge actually
+      // captures (unlike COD, which emits order.placed at creation — see
+      // order.service.ts's placeOrder) — this is that equivalent point.
+      const items = await findItemsByOrderIds(trx, [order.id]);
+      await insertOutboxEvent(trx, {
+        aggregateType: "order",
+        aggregateId: order.id,
+        eventType: "order.placed",
+        eventId: uuidv4(),
+        payload: {
+          orderPublicId: order.publicId,
+          region,
+          restaurantId: order.restaurantId,
+          branchId: order.branchId,
+          subtotal: order.subtotal,
+          deliveryFee: order.deliveryFee,
+          total: order.total,
+          currency: order.currency,
+          paymentMethod: order.paymentMethod,
+          status: OrderStatus.PLACED,
+          createdAt: order.createdAt.toISOString(),
+          items: items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            unitPriceSnapshot: item.unitPriceSnapshot,
+            lineTotal: item.lineTotal,
+          })),
+        },
+      });
+
       return { result: "captured", order };
     } else {
       await updatePaymentSessionStatus(

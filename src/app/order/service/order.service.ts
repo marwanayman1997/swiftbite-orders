@@ -53,6 +53,7 @@ import {
 import { cancelActiveDeliveryForOrder } from "../../delivery/repository/delivery.repo.ts";
 import { markAgentFree } from "../../../lib/presence/presence-store.ts";
 import { publish } from "../../../lib/websocket/publisher.ts";
+import { insertOutboxEvent } from "../../../lib/events/outbox.repo.ts";
 import type {
   FilterParams,
   PaginationMeta,
@@ -233,6 +234,35 @@ export class OrderService {
           srcAccId: customerId,
           dstAccId: branch.restaurantOwnerId,
         });
+
+        // COD orders are "real" the moment they're placed — the equivalent
+        // online-payment event fires from kashier-webhook.service.ts instead,
+        // once the charge actually captures (see handlePayEvent).
+        await insertOutboxEvent(trx, {
+          aggregateType: "order",
+          aggregateId: order.id,
+          eventType: "order.placed",
+          eventId: uuidv4(),
+          payload: {
+            orderPublicId: order.publicId,
+            region,
+            restaurantId: order.restaurantId,
+            branchId: order.branchId,
+            subtotal: order.subtotal,
+            deliveryFee: order.deliveryFee,
+            total: order.total,
+            currency: order.currency,
+            paymentMethod: order.paymentMethod,
+            status: order.status,
+            createdAt: order.createdAt.toISOString(),
+            items: items.map((item) => ({
+              productId: item.productId,
+              quantity: item.quantity,
+              unitPriceSnapshot: item.unitPriceSnapshot,
+              lineTotal: item.lineTotal,
+            })),
+          },
+        });
       }
 
       await trx.commit();
@@ -350,8 +380,9 @@ export class OrderService {
     id: number,
     region: string,
     targetStatus: OrderStatus,
+    trx?: Knex,
   ): Promise<OrderEntity> => {
-    const updated = await updateOrderStatus(db(region), id, targetStatus);
+    const updated = await updateOrderStatus(trx ?? db(region), id, targetStatus);
     if (!updated) throw OrderNotFoundError;
     return updated;
   };
@@ -547,7 +578,36 @@ export class OrderService {
       }
     }
 
-    const updated = await updateOrderStatus(conn, order.id, targetStatus);
+    // Status write + outbox row must land atomically (CLAUDE.md §8) — the
+    // downstream delivery-cancel/agent-free steps below stay outside this
+    // trx, matching their pre-existing (already non-transactional) timing.
+    const trx = await conn.transaction();
+    let updated: OrderEntity | undefined;
+    try {
+      updated = await updateOrderStatus(trx, order.id, targetStatus);
+      await insertOutboxEvent(trx, {
+        aggregateType: "order",
+        aggregateId: order.id,
+        eventType: "order.status_changed",
+        eventId: uuidv4(),
+        payload: {
+          orderPublicId: order.publicId,
+          region,
+          restaurantId: order.restaurantId,
+          branchId: order.branchId,
+          status: targetStatus,
+          updatedAt: updated!.updatedAt.toISOString(),
+          // Lets consumers (analytics-service) attribute this transition back
+          // to the day the order was placed, not the day it changed status.
+          orderCreatedAt: order.createdAt.toISOString(),
+          currency: order.currency,
+        },
+      });
+      await trx.commit();
+    } catch (err) {
+      await trx.rollback();
+      throw err;
+    }
 
     if (
       targetStatus === OrderStatus.CANCELLED &&

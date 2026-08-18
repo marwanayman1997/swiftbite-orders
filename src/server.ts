@@ -7,6 +7,7 @@ import { attachWsServer } from "./lib/websocket/ws-server.ts";
 import { startCoreEventsConsumer } from "./lib/core-events/consumer.ts";
 import { registerCoreEventHandlers } from "./lib/core-events/register-handlers.ts";
 import { startArchivalScheduler } from "./lib/jobs/archival-scheduler.ts";
+import { startOutboxScheduler } from "./lib/events/outbox-scheduler.ts";
 import { container } from "./lib/di/container.ts";
 import { TOKENS } from "./lib/di/tokens.ts";
 import { logger } from "./lib/logger/logger.ts";
@@ -24,6 +25,10 @@ startCoreEventsConsumer().catch((err) => {
 });
 
 startArchivalScheduler();
+
+startOutboxScheduler().catch((err) => {
+  logger.error("Failed to start outbox scheduler", { error: err.message });
+});
 
 pingAll()
   .then(() => logger.info("All shards reachable at boot"))

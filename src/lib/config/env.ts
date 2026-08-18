@@ -25,6 +25,7 @@ const schema = z.object({
 
   RABBITMQ_URL: z.string(),
   RABBITMQ_CORE_EVENTS_EXCHANGE: z.string().default("core.events"),
+  RABBITMQ_ORDER_EVENTS_EXCHANGE: z.string().default("order.events"),
   RABBITMQ_CORE_EVENTS_QUEUE: z.string().default("order-service.core-events"),
   RABBITMQ_CORE_EVENTS_BINDINGS: z
     .string()
@@ -57,6 +58,10 @@ const schema = z.object({
   ARCHIVAL_MAX_RUNTIME_MIN: z.string().default("60"),
   ARCHIVAL_INTERVAL_MIN: z.string().default("1440"),
   ARCHIVAL_ENABLED: z.string().default("true"),
+
+  OUTBOX_BATCH_SIZE: z.string().default("50"),
+  OUTBOX_DRAIN_ENABLED: z.string().default("true"),
+  OUTBOX_DRAIN_INTERVAL_MS: z.string().default("2000"),
 });
 
 const parsed = schema.parse(process.env);
@@ -150,6 +155,7 @@ export const env = {
   rabbitmq: {
     url: parsed.RABBITMQ_URL,
     coreEventsExchange: parsed.RABBITMQ_CORE_EVENTS_EXCHANGE,
+    orderEventsExchange: parsed.RABBITMQ_ORDER_EVENTS_EXCHANGE,
     coreEventsQueue: parsed.RABBITMQ_CORE_EVENTS_QUEUE,
     coreEventsBindings: parsed.RABBITMQ_CORE_EVENTS_BINDINGS.split(",")
       .map((b) => b.trim())
@@ -187,5 +193,10 @@ export const env = {
     maxRuntimeMin: Number(parsed.ARCHIVAL_MAX_RUNTIME_MIN),
     intervalMin: Number(parsed.ARCHIVAL_INTERVAL_MIN),
     enabled: parsed.ARCHIVAL_ENABLED === "true",
+  },
+  outbox: {
+    batchSize: Number(parsed.OUTBOX_BATCH_SIZE),
+    drainEnabled: parsed.OUTBOX_DRAIN_ENABLED === "true",
+    drainIntervalMs: Number(parsed.OUTBOX_DRAIN_INTERVAL_MS),
   },
 };
